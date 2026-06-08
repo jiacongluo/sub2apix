@@ -2,6 +2,9 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -75,6 +78,7 @@ type DataImportResult struct {
 	ProxyReused    int               `json:"proxy_reused"`
 	ProxyFailed    int               `json:"proxy_failed"`
 	AccountCreated int               `json:"account_created"`
+	AccountSkipped int               `json:"account_skipped"`
 	AccountFailed  int               `json:"account_failed"`
 	Errors         []DataImportError `json:"errors,omitempty"`
 }
@@ -372,6 +376,11 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 
 	// 收集需要异步设置隐私的 Antigravity OAuth 账号
 	var privacyAccounts []*service.Account
+	existingAccounts, err := h.listAccountsFiltered(ctx, "", "", "", "", 0, "", "created_at", "desc")
+	if err != nil {
+		return result, err
+	}
+	accountIndex := buildDataAccountIndex(existingAccounts)
 
 	for i := range dataPayload.Accounts {
 		item := dataPayload.Accounts[i]
@@ -402,6 +411,11 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		}
 
 		enrichCredentialsFromIDToken(&item)
+		identityKeys := buildDataAccountIdentityKeys(item.Platform, item.Type, item.Name, item.Credentials)
+		if accountIndex.Has(identityKeys) {
+			result.AccountSkipped++
+			continue
+		}
 
 		accountInput := &service.CreateAccountInput{
 			Name:                 item.Name,
@@ -434,6 +448,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		if created.Platform == service.PlatformAntigravity && created.Type == service.AccountTypeOAuth {
 			privacyAccounts = append(privacyAccounts, created)
 		}
+		accountIndex.AddServiceAccount(*created)
 		result.AccountCreated++
 	}
 
@@ -455,6 +470,96 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 	}
 
 	return result, nil
+}
+
+type dataAccountIndex struct {
+	accountsByKey map[string]struct{}
+}
+
+func buildDataAccountIndex(accounts []service.Account) *dataAccountIndex {
+	index := &dataAccountIndex{accountsByKey: map[string]struct{}{}}
+	for _, account := range accounts {
+		index.AddServiceAccount(account)
+	}
+	return index
+}
+
+func (i *dataAccountIndex) Has(keys []string) bool {
+	if i == nil {
+		return false
+	}
+	for _, key := range keys {
+		if _, ok := i.accountsByKey[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (i *dataAccountIndex) AddServiceAccount(account service.Account) {
+	if i == nil {
+		return
+	}
+	if i.accountsByKey == nil {
+		i.accountsByKey = map[string]struct{}{}
+	}
+	keys := buildDataAccountIdentityKeys(account.Platform, account.Type, account.Name, account.Credentials)
+	for _, key := range keys {
+		i.accountsByKey[key] = struct{}{}
+	}
+}
+
+func buildDataAccountIdentityKeys(platform, accountType, name string, credentials map[string]any) []string {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	keys := make([]string, 0, 6)
+
+	if platform == service.PlatformOpenAI && accountType == service.AccountTypeOAuth {
+		if userID := dataCredentialString(credentials, "chatgpt_user_id"); userID != "" {
+			keys = append(keys, "openai:oauth:user:"+userID)
+		}
+		if email := dataCredentialString(credentials, "email"); email != "" {
+			keys = append(keys, "openai:oauth:email:"+strings.ToLower(email))
+		}
+		if accessToken := dataCredentialString(credentials, "access_token"); accessToken != "" {
+			keys = append(keys, "openai:oauth:access:"+dataHashString(accessToken))
+		}
+	}
+
+	if fingerprint := dataCredentialFingerprint(credentials); fingerprint != "" {
+		keys = append(keys, platform+":"+accountType+":credentials:"+fingerprint)
+	}
+	if normalizedName := strings.ToLower(strings.TrimSpace(name)); normalizedName != "" {
+		keys = append(keys, platform+":"+accountType+":name:"+normalizedName)
+	}
+	return keys
+}
+
+func dataCredentialString(credentials map[string]any, key string) string {
+	if credentials == nil {
+		return ""
+	}
+	value, ok := credentials[key]
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func dataCredentialFingerprint(credentials map[string]any) string {
+	if len(credentials) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(credentials)
+	if err != nil {
+		return ""
+	}
+	return dataHashString(string(payload))
+}
+
+func dataHashString(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return hex.EncodeToString(sum[:])
 }
 
 func (h *AccountHandler) listAllProxies(ctx context.Context) ([]service.Proxy, error) {

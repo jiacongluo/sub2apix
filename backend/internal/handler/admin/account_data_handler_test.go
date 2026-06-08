@@ -17,6 +17,18 @@ type dataResponse struct {
 	Data dataPayload `json:"data"`
 }
 
+type dataImportResponse struct {
+	Code int `json:"code"`
+	Data struct {
+		ProxyCreated   int `json:"proxy_created"`
+		ProxyReused    int `json:"proxy_reused"`
+		ProxyFailed    int `json:"proxy_failed"`
+		AccountCreated int `json:"account_created"`
+		AccountSkipped int `json:"account_skipped"`
+		AccountFailed  int `json:"account_failed"`
+	} `json:"data"`
+}
+
 type dataPayload struct {
 	Type     string        `json:"type"`
 	Version  int           `json:"version"`
@@ -274,4 +286,178 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdProxies, 0)
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
+}
+
+func TestImportDataSkipsExistingOpenAIOAuthAccount(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	adminSvc.accounts = []service.Account{
+		{
+			ID:       21,
+			Name:     "existing",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "acct-existing",
+				"chatgpt_user_id":    "user-existing",
+				"email":              "existing@example.com",
+			},
+		},
+	}
+
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{},
+			"accounts": []map[string]any{
+				{
+					"name":     "incoming",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"chatgpt_account_id": "acct-existing",
+						"chatgpt_user_id":    "user-existing",
+						"email":              "renamed@example.com",
+						"access_token":       "new-token",
+					},
+					"concurrency": 3,
+					"priority":    50,
+				},
+			},
+		},
+		"skip_default_group_bind": true,
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dataImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 0, resp.Data.AccountCreated)
+	require.Equal(t, 1, resp.Data.AccountSkipped)
+	require.Equal(t, 0, resp.Data.AccountFailed)
+	require.Empty(t, adminSvc.createdAccounts)
+}
+
+func TestImportDataDoesNotSkipDifferentOpenAIUserSharingAccountID(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	adminSvc.accounts = []service.Account{
+		{
+			ID:       21,
+			Name:     "existing",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "shared-account-id",
+				"chatgpt_user_id":    "user-existing",
+				"email":              "existing@example.com",
+				"access_token":       "old-token",
+			},
+		},
+	}
+
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{},
+			"accounts": []map[string]any{
+				{
+					"name":     "incoming",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"chatgpt_account_id": "shared-account-id",
+						"chatgpt_user_id":    "user-incoming",
+						"email":              "incoming@example.com",
+						"access_token":       "new-token",
+					},
+					"concurrency": 3,
+					"priority":    50,
+				},
+			},
+		},
+		"skip_default_group_bind": true,
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dataImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 1, resp.Data.AccountCreated)
+	require.Equal(t, 0, resp.Data.AccountSkipped)
+	require.Equal(t, 0, resp.Data.AccountFailed)
+	require.Len(t, adminSvc.createdAccounts, 1)
+}
+
+func TestImportDataSkipsDuplicateAccountInSamePayload(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.accounts = []service.Account{}
+
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{},
+			"accounts": []map[string]any{
+				{
+					"name":     "first",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"chatgpt_account_id": "acct-batch",
+						"chatgpt_user_id":    "user-batch",
+						"email":              "batch@example.com",
+						"access_token":       "token-one",
+					},
+					"concurrency": 3,
+					"priority":    50,
+				},
+				{
+					"name":     "second",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"chatgpt_account_id": "acct-batch",
+						"chatgpt_user_id":    "user-batch",
+						"email":              "batch-renamed@example.com",
+						"access_token":       "token-two",
+					},
+					"concurrency": 3,
+					"priority":    50,
+				},
+			},
+		},
+		"skip_default_group_bind": true,
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dataImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 1, resp.Data.AccountCreated)
+	require.Equal(t, 1, resp.Data.AccountSkipped)
+	require.Equal(t, 0, resp.Data.AccountFailed)
+	require.Len(t, adminSvc.createdAccounts, 1)
 }

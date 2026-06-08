@@ -21,6 +21,7 @@ type stubAdminService struct {
 	boundAuthIdentityFor int64
 	createdAccounts      []*service.CreateAccountInput
 	createdProxies       []*service.CreateProxyInput
+	deletedAccountIDs    []int64
 	updatedProxyIDs      []int64
 	updatedProxies       []*service.UpdateProxyInput
 	testedProxyIDs       []int64
@@ -324,7 +325,20 @@ func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int,
 	s.lastListAccounts.sortBy = sortBy
 	s.lastListAccounts.sortOrder = sortOrder
 	s.lastListAccounts.calls++
-	return s.accounts, int64(len(s.accounts)), nil
+	out := make([]service.Account, 0, len(s.accounts))
+	for _, account := range s.accounts {
+		if platform != "" && account.Platform != platform {
+			continue
+		}
+		if accountType != "" && account.Type != accountType {
+			continue
+		}
+		if status != "" && account.Status != status {
+			continue
+		}
+		out = append(out, account)
+	}
+	return out, int64(len(out)), nil
 }
 
 func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.Account, error) {
@@ -348,7 +362,15 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 	if s.createAccountErr != nil {
 		return nil, s.createAccountErr
 	}
-	account := service.Account{ID: 300, Name: input.Name, Status: service.StatusActive}
+	account := service.Account{
+		ID:          int64(300 + len(s.createdAccounts) - 1),
+		Name:        input.Name,
+		Platform:    input.Platform,
+		Type:        input.Type,
+		Credentials: input.Credentials,
+		Extra:       input.Extra,
+		Status:      service.StatusActive,
+	}
 	return &account, nil
 }
 
@@ -365,6 +387,9 @@ func (s *stubAdminService) UpdateAccountExtra(ctx context.Context, id int64, upd
 }
 
 func (s *stubAdminService) DeleteAccount(ctx context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deletedAccountIDs = append(s.deletedAccountIDs, id)
 	return nil
 }
 

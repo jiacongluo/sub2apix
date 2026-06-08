@@ -360,7 +360,40 @@
         </DataTable>
         </div>
       </template>
-      <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
+      <template #pagination>
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        >
+          <template #leftActions>
+            <button
+              type="button"
+              data-test="delete-error-accounts"
+              class="btn btn-danger btn-sm shrink-0"
+              @click="openDeleteErrorAccountsDialog"
+            >
+              <Icon name="trash" size="sm" />
+              <span>{{ t('admin.accounts.bulkActions.deleteErrorStatus') }}</span>
+            </button>
+          </template>
+        </Pagination>
+        <div v-else class="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 dark:border-dark-700 dark:bg-dark-800 sm:px-6">
+          <div></div>
+          <button
+            type="button"
+            data-test="delete-error-accounts"
+            class="btn btn-danger btn-sm shrink-0"
+            @click="openDeleteErrorAccountsDialog"
+          >
+            <Icon name="trash" size="sm" />
+            <span>{{ t('admin.accounts.bulkActions.deleteErrorStatus') }}</span>
+          </button>
+        </div>
+      </template>
     </TablePageLayout>
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
@@ -384,6 +417,13 @@
     />
     <TempUnschedStatusModal :show="showTempUnsched" :account="tempUnschedAcc" @close="showTempUnsched = false" @reset="handleTempUnschedReset" />
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
+    <ConfirmDialog :show="showDeleteErrorAccountsDialog" :title="t('admin.accounts.deleteErrorStatus.title')" :message="t('admin.accounts.deleteErrorStatus.message')" :confirm-text="t('admin.accounts.deleteErrorStatus.confirm')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDeleteErrorAccounts" @cancel="showDeleteErrorAccountsDialog = false">
+      <p data-test="delete-error-count" class="text-sm font-medium text-red-600 dark:text-red-300">
+        <span v-if="deleteErrorAccountsCountLoading">{{ t('admin.accounts.deleteErrorStatus.countLoading') }}</span>
+        <span v-else-if="deleteErrorAccountsCount !== null">{{ t('admin.accounts.deleteErrorStatus.countInfo', { count: deleteErrorAccountsCount }) }}</span>
+        <span v-else>{{ t('admin.accounts.deleteErrorStatus.countUnavailable') }}</span>
+      </p>
+    </ConfirmDialog>
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
       <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
         <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" v-model="includeProxyOnExport" />
@@ -493,6 +533,9 @@ const showBulkEdit = ref(false)
 const bulkEditTarget = ref<AccountBulkEditTarget | null>(null)
 const showTempUnsched = ref(false)
 const showDeleteDialog = ref(false)
+const showDeleteErrorAccountsDialog = ref(false)
+const deleteErrorAccountsCount = ref<number | null>(null)
+const deleteErrorAccountsCountLoading = ref(false)
 const showReAuth = ref(false)
 const showTest = ref(false)
 const showStats = ref(false)
@@ -871,6 +914,7 @@ const isAnyModalOpen = computed(() => {
     showBulkEdit.value ||
     showTempUnsched.value ||
     showDeleteDialog.value ||
+    showDeleteErrorAccountsDialog.value ||
     showReAuth.value ||
     showTest.value ||
     showStats.value ||
@@ -1228,6 +1272,38 @@ const toggleSelectAllVisible = (event: Event) => {
   toggleVisible(target.checked)
 }
 const handleBulkDelete = async () => { if(!confirm(t('common.confirm'))) return; try { await Promise.all(selIds.value.map(id => adminAPI.accounts.delete(id))); clearSelection(); reload() } catch (error) { console.error('Failed to bulk delete accounts:', error) } }
+const loadDeleteErrorAccountsCount = async () => {
+  deleteErrorAccountsCount.value = null
+  deleteErrorAccountsCountLoading.value = true
+  try {
+    const result = await adminAPI.accounts.list(1, 1, { status: 'error' })
+    deleteErrorAccountsCount.value = result.total
+  } catch (error) {
+    console.error('Failed to load error status account count:', error)
+  } finally {
+    deleteErrorAccountsCountLoading.value = false
+  }
+}
+const openDeleteErrorAccountsDialog = () => {
+  showDeleteErrorAccountsDialog.value = true
+  loadDeleteErrorAccountsCount()
+}
+const confirmDeleteErrorAccounts = async () => {
+  try {
+    const result = await adminAPI.accounts.deleteErrorStatusAccounts()
+    showDeleteErrorAccountsDialog.value = false
+    clearSelection()
+    if (result.failed > 0) {
+      appStore.showError(t('admin.accounts.deleteErrorStatus.partialSuccess', { success: result.success, failed: result.failed }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.deleteErrorStatus.success', { count: result.success }))
+    }
+    await reload()
+  } catch (error: any) {
+    console.error('Failed to delete error status accounts:', error)
+    appStore.showError(error?.message || t('admin.accounts.deleteErrorStatus.failed'))
+  }
+}
 const handleBulkResetStatus = async () => {
   if (!confirm(t('common.confirm'))) return
   try {

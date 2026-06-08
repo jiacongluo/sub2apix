@@ -696,6 +696,54 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Account deleted successfully"})
 }
 
+// DeleteErrorStatusAccounts deletes every account whose status is error.
+// POST /api/v1/admin/accounts/delete-error-status
+func (h *AccountHandler) DeleteErrorStatusAccounts(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	accounts, err := h.listAccountsFiltered(ctx, "", "", service.StatusError, "", 0, "", "created_at", "desc")
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	successCount := 0
+	failedCount := 0
+	errors := make([]gin.H, 0)
+	for _, account := range accounts {
+		if err := h.adminService.DeleteAccount(ctx, account.ID); err != nil {
+			failedCount++
+			errors = append(errors, gin.H{
+				"account_id": account.ID,
+				"error":      err.Error(),
+			})
+			continue
+		}
+		successCount++
+	}
+
+	response.Success(c, gin.H{
+		"total":       len(accounts),
+		"success":     successCount,
+		"failed":      failedCount,
+		"deleted":     successCount,
+		"failed_ids":  accountIDsFromDeleteErrors(errors),
+		"errors":      errors,
+		"status_used": service.StatusError,
+	})
+}
+
+func accountIDsFromDeleteErrors(items []gin.H) []int64 {
+	ids := make([]int64, 0, len(items))
+	for _, item := range items {
+		id, ok := item["account_id"].(int64)
+		if ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // TestAccountRequest represents the request body for testing an account
 type TestAccountRequest struct {
 	ModelID string `json:"model_id"`

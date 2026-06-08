@@ -8,13 +8,15 @@ const {
   listWithEtag,
   getBatchTodayStats,
   getAllProxies,
-  getAllGroups
+  getAllGroups,
+  deleteErrorStatusAccounts
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
   getAllProxies: vi.fn(),
-  getAllGroups: vi.fn()
+  getAllGroups: vi.fn(),
+  deleteErrorStatusAccounts: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -24,6 +26,7 @@ vi.mock('@/api/admin', () => ({
       listWithEtag,
       getBatchTodayStats,
       delete: vi.fn(),
+      deleteErrorStatusAccounts,
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
       toggleSchedulable: vi.fn()
@@ -56,7 +59,8 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string, params?: Record<string, string | number>) =>
+        params?.count !== undefined ? `${key} ${params.count}` : key
     })
   }
 })
@@ -76,12 +80,25 @@ const DataTableStub = {
 const AccountBulkActionsBarStub = {
   props: ['selectedIds'],
   emits: ['edit-filtered'],
-  template: '<button data-test="edit-filtered" @click="$emit(\'edit-filtered\')">edit filtered</button>'
+  template: `
+    <div>
+      <button data-test="edit-filtered" @click="$emit('edit-filtered')">edit filtered</button>
+    </div>
+  `
 }
 
 const BulkEditAccountModalStub = {
   props: ['show', 'target'],
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
+}
+
+const ConfirmDialogStub = {
+  props: ['show', 'message'],
+  template: '<div v-if="show" data-test="confirm-dialog"><span data-test="confirm-message">{{ message }}</span><slot /></div>'
+}
+
+const PaginationWithLeftActionsStub = {
+  template: '<div data-test="pagination"><slot name="leftActions" /></div>'
 }
 
 describe('admin AccountsView bulk edit scope', () => {
@@ -93,6 +110,7 @@ describe('admin AccountsView bulk edit scope', () => {
     getBatchTodayStats.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
+    deleteErrorStatusAccounts.mockReset()
 
     listAccounts.mockResolvedValue({
       items: [],
@@ -155,6 +173,70 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('true')
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
+  })
+
+  it('shows the current global error-account count in the delete-error confirmation', async () => {
+    listAccounts
+      .mockResolvedValueOnce({
+        items: [],
+        total: 45,
+        page: 1,
+        page_size: 20,
+        pages: 3
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 7,
+        page: 1,
+        page_size: 1,
+        pages: 7
+      })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: PaginationWithLeftActionsStub,
+          ConfirmDialog: ConfirmDialogStub,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="delete-error-accounts"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts.mock.calls.some(([page, pageSize, filters]) =>
+      page === 1 && pageSize === 1 && filters?.status === 'error'
+    )).toBe(true)
+    expect(wrapper.get('[data-test="delete-error-count"]').text()).toContain('7')
   })
 
   it('renders the created_at column by default', async () => {

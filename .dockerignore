@@ -64,6 +64,7 @@ deploy/sub2api-sudoers
 deploy/data/
 deploy/postgres_data/
 deploy/redis_data/
+deploy/migration-backups/
 
 # GoReleaser
 .goreleaser.yaml
@@ -75,3 +76,6 @@ deploy/redis_data/
 .claude/
 issues/
 CLAUDE.md
+
+# Local analysis/cache
+.codegraph/

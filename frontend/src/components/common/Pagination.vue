@@ -65,6 +65,8 @@
             {{ t('pagination.jumpAction') }}
           </button>
         </div>
+
+        <slot name="leftActions"></slot>
       </div>
 
       <!-- Desktop pagination buttons -->

@@ -166,6 +166,24 @@ export async function deleteAccount(id: number): Promise<{ message: string }> {
   return data
 }
 
+export interface DeleteErrorStatusAccountsResult {
+  total: number
+  success: number
+  failed: number
+  deleted: number
+  failed_ids?: number[]
+  errors?: Array<{ account_id: number; error: string }>
+}
+
+/**
+ * Delete all accounts whose status is error.
+ * This is a global operation and is not scoped to the current page or filters.
+ */
+export async function deleteErrorStatusAccounts(): Promise<DeleteErrorStatusAccountsResult> {
+  const { data } = await apiClient.post<DeleteErrorStatusAccountsResult>('/admin/accounts/delete-error-status')
+  return data
+}
+
 /**
  * Toggle account status
  * @param id - Account ID
@@ -713,6 +731,7 @@ export const accountsAPI = {
   update,
   checkMixedChannelRisk,
   delete: deleteAccount,
+  deleteErrorStatusAccounts,
   toggleStatus,
   testAccount,
   refreshCredentials,
