@@ -541,14 +541,9 @@ func buildDataAccountIdentityKeys(platform, accountType, name string, credential
 	keys := make([]string, 0, 6)
 
 	if platform == service.PlatformOpenAI && accountType == service.AccountTypeOAuth {
-		if userID := dataCredentialString(credentials, "chatgpt_user_id"); userID != "" {
-			keys = append(keys, "openai:oauth:user:"+userID)
-		}
-		if email := dataCredentialString(credentials, "email"); email != "" {
-			keys = append(keys, "openai:oauth:email:"+strings.ToLower(email))
-		}
-		if accessToken := dataCredentialString(credentials, "access_token"); accessToken != "" {
-			keys = append(keys, "openai:oauth:access:"+dataHashString(accessToken))
+		keys = append(keys, buildOpenAIOAuthDataAccountIdentityKeys(credentials)...)
+		if len(keys) > 0 {
+			return keys
 		}
 	}
 
@@ -557,6 +552,42 @@ func buildDataAccountIdentityKeys(platform, accountType, name string, credential
 	}
 	if normalizedName := strings.ToLower(strings.TrimSpace(name)); normalizedName != "" {
 		keys = append(keys, platform+":"+accountType+":name:"+normalizedName)
+	}
+	return keys
+}
+
+func buildOpenAIOAuthDataAccountIdentityKeys(credentials map[string]any) []string {
+	keys := make([]string, 0, 3)
+	workspaceID := dataCredentialString(credentials, "chatgpt_account_id")
+	userID := dataCredentialString(credentials, "chatgpt_user_id")
+	email := strings.ToLower(dataCredentialString(credentials, "email"))
+
+	if workspaceID != "" {
+		switch {
+		case userID != "":
+			keys = append(keys, "openai:oauth:workspace_user:"+workspaceID+":"+userID)
+		case email != "":
+			keys = append(keys, "openai:oauth:workspace_email:"+workspaceID+":"+email)
+		default:
+			keys = append(keys, "openai:oauth:workspace:"+workspaceID)
+		}
+		if fingerprint := dataCredentialFingerprint(credentials); fingerprint != "" {
+			keys = append(keys, "openai:oauth:credentials:"+fingerprint)
+		}
+		return keys
+	}
+
+	if userID != "" {
+		keys = append(keys, "openai:oauth:user:"+userID)
+	}
+	if email != "" {
+		keys = append(keys, "openai:oauth:email:"+email)
+	}
+	if accessToken := dataCredentialString(credentials, "access_token"); accessToken != "" {
+		keys = append(keys, "openai:oauth:access:"+dataHashString(accessToken))
+	}
+	if fingerprint := dataCredentialFingerprint(credentials); fingerprint != "" {
+		keys = append(keys, "openai:oauth:credentials:"+fingerprint)
 	}
 	return keys
 }

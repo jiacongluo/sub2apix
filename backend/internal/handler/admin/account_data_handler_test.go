@@ -446,6 +446,63 @@ func TestImportDataDoesNotSkipDifferentOpenAIUserSharingAccountID(t *testing.T) 
 	require.Len(t, adminSvc.createdAccounts, 1)
 }
 
+func TestImportDataDoesNotSkipSameOpenAIUserInDifferentWorkspaces(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.accounts = []service.Account{}
+
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{},
+			"accounts": []map[string]any{
+				{
+					"name":     "same-user@example.com",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"chatgpt_account_id": "workspace-one",
+						"chatgpt_user_id":    "same-user",
+						"email":              "same-user@example.com",
+						"access_token":       "token-one",
+					},
+					"concurrency": 3,
+					"priority":    50,
+				},
+				{
+					"name":     "same-user@example.com",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"chatgpt_account_id": "workspace-two",
+						"chatgpt_user_id":    "same-user",
+						"email":              "same-user@example.com",
+						"access_token":       "token-two",
+					},
+					"concurrency": 3,
+					"priority":    50,
+				},
+			},
+		},
+		"skip_default_group_bind": true,
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dataImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 2, resp.Data.AccountCreated)
+	require.Equal(t, 0, resp.Data.AccountSkipped)
+	require.Equal(t, 0, resp.Data.AccountFailed)
+	require.Len(t, adminSvc.createdAccounts, 2)
+}
+
 func TestImportDataSkipsDuplicateAccountInSamePayload(t *testing.T) {
 	router, adminSvc := setupAccountDataRouter()
 	adminSvc.accounts = []service.Account{}
