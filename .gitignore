@@ -1,5 +1,6 @@
 docs/claude-relay-service/
 .codex
+.reasonix
 
 # ===================
 # Go 后端
