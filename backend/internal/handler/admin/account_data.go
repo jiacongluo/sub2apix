@@ -475,6 +475,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			privacyAccounts = append(privacyAccounts, created)
 		}
 		accountIndex.AddServiceAccount(*created)
+		h.scheduleGrokImportProbe(created)
 		result.AccountCreated++
 	}
 
